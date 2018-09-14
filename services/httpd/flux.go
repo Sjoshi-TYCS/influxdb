@@ -120,6 +120,10 @@ func (r QueryRequest) ProxyRequest() *ProxyRequest {
 		noHeader = !*r.Dialect.Header
 	}
 
+	cfg := csv.DefaultEncoderConfig()
+	cfg.NoHeader = noHeader
+	cfg.Delimiter = delimiter
+
 	// TODO(nathanielc): Use commentPrefix and dateTimeFormat
 	// once they are supported.
 	return &ProxyRequest{
@@ -127,11 +131,7 @@ func (r QueryRequest) ProxyRequest() *ProxyRequest {
 			Compiler: compiler,
 		},
 		Dialect: csv.Dialect{
-			ResultEncoderConfig: csv.ResultEncoderConfig{
-				NoHeader:    noHeader,
-				Delimiter:   delimiter,
-				Annotations: r.Dialect.Annotations,
-			},
+			ResultEncoderConfig: cfg,
 		},
 	}
 }

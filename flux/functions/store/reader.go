@@ -155,6 +155,11 @@ READ:
 			panic(fmt.Sprintf("unreachable: %T", cur))
 		}
 
+		if table.Empty() {
+			table.Close()
+			continue
+		}
+
 		if err := f(table); err != nil {
 			table.Close()
 			return err
