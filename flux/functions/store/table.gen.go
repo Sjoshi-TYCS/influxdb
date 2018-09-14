@@ -133,6 +133,10 @@ func (t *floatGroupTable) Close() {
 		t.cur.Close()
 		t.cur = nil
 	}
+	if t.gc != nil {
+		t.gc.Close()
+		t.gc = nil
+	}
 	if t.done != nil {
 		close(t.done)
 		t.done = nil
@@ -337,6 +341,10 @@ func (t *integerGroupTable) Close() {
 	if t.cur != nil {
 		t.cur.Close()
 		t.cur = nil
+	}
+	if t.gc != nil {
+		t.gc.Close()
+		t.gc = nil
 	}
 	if t.done != nil {
 		close(t.done)
@@ -543,6 +551,10 @@ func (t *unsignedGroupTable) Close() {
 		t.cur.Close()
 		t.cur = nil
 	}
+	if t.gc != nil {
+		t.gc.Close()
+		t.gc = nil
+	}
 	if t.done != nil {
 		close(t.done)
 		t.done = nil
@@ -748,6 +760,10 @@ func (t *stringGroupTable) Close() {
 		t.cur.Close()
 		t.cur = nil
 	}
+	if t.gc != nil {
+		t.gc.Close()
+		t.gc = nil
+	}
 	if t.done != nil {
 		close(t.done)
 		t.done = nil
@@ -952,6 +968,10 @@ func (t *booleanGroupTable) Close() {
 	if t.cur != nil {
 		t.cur.Close()
 		t.cur = nil
+	}
+	if t.gc != nil {
+		t.gc.Close()
+		t.gc = nil
 	}
 	if t.done != nil {
 		close(t.done)

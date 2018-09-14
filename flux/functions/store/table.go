@@ -3,9 +3,13 @@ package store
 //go:generate go run ../../../_tools/tmpl/main.go -i -data=types.tmpldata table.gen.go.tmpl=table.gen.go
 
 import (
+	"fmt"
+
 	"github.com/influxdata/flux"
 	"github.com/influxdata/flux/execute"
 	"github.com/influxdata/influxdb/models"
+	"github.com/influxdata/influxdb/services/storage"
+	"github.com/influxdata/influxdb/tsdb"
 )
 
 type table struct {
@@ -145,4 +149,122 @@ func (t *table) appendBounds() {
 		}
 		t.colBufs[j] = colBuf
 	}
+}
+
+func hasPoints(cur tsdb.Cursor) bool {
+	if cur == nil {
+		return false
+	}
+
+	res := false
+	switch cur := cur.(type) {
+	case tsdb.IntegerArrayCursor:
+		a := cur.Next()
+		res = a.Len() > 0
+	case tsdb.FloatArrayCursor:
+		a := cur.Next()
+		res = a.Len() > 0
+	case tsdb.UnsignedArrayCursor:
+		a := cur.Next()
+		res = a.Len() > 0
+	case tsdb.BooleanArrayCursor:
+		a := cur.Next()
+		res = a.Len() > 0
+	case tsdb.StringArrayCursor:
+		a := cur.Next()
+		res = a.Len() > 0
+	default:
+		panic(fmt.Sprintf("unreachable: %T", cur))
+	}
+	cur.Close()
+	return res
+}
+
+type tableNoPoints struct {
+	table
+}
+
+func newTableNoPoints(
+	bounds execute.Bounds,
+	key flux.GroupKey,
+	cols []flux.ColMeta,
+	tags models.Tags,
+	defs [][]byte,
+) *tableNoPoints {
+	t := &tableNoPoints{
+		table: newTable(bounds, key, cols, defs),
+	}
+	t.readTags(tags)
+
+	return t
+}
+
+func (t *tableNoPoints) Close() {
+	if t.done != nil {
+		close(t.done)
+		t.done = nil
+	}
+}
+
+func (t *tableNoPoints) Do(f func(flux.ColReader) error) error {
+	defer t.Close()
+
+	f(t)
+
+	return t.err
+}
+
+type groupTableNoPoints struct {
+	table
+	gc storage.GroupCursor
+}
+
+func newGroupTableNoPoints(
+	gc storage.GroupCursor,
+	bounds execute.Bounds,
+	key flux.GroupKey,
+	cols []flux.ColMeta,
+	tags models.Tags,
+	defs [][]byte,
+) *groupTableNoPoints {
+	t := &groupTableNoPoints{
+		table: newTable(bounds, key, cols, defs),
+		gc:    gc,
+	}
+	t.readTags(tags)
+
+	return t
+}
+
+func (t *groupTableNoPoints) Close() {
+	if t.gc != nil {
+		t.gc.Close()
+		t.gc = nil
+	}
+	if t.done != nil {
+		close(t.done)
+		t.done = nil
+	}
+}
+
+func (t *groupTableNoPoints) Do(f func(flux.ColReader) error) error {
+	defer t.Close()
+
+	for t.advanceCursor() {
+		if err := f(t); err != nil {
+			return err
+		}
+	}
+
+	return t.err
+}
+
+func (t *groupTableNoPoints) advanceCursor() bool {
+	for t.gc.Next() {
+		if hasPoints(t.gc.Cursor()) {
+			t.readTags(t.gc.Tags())
+			return true
+		}
+	}
+	return false
 }

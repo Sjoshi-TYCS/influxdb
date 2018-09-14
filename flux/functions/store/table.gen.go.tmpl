@@ -131,6 +131,10 @@ func (t *{{.name}}GroupTable) Close() {
 		t.cur.Close()
 		t.cur = nil
 	}
+	if t.gc != nil {
+		t.gc.Close()
+		t.gc = nil
+	}
 	if t.done != nil {
 		close(t.done)
 		t.done = nil

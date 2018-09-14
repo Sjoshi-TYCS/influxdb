@@ -99,12 +99,20 @@ func (bi *tableIterator) Do(f func(flux.Table) error) error {
 		if err != nil {
 			return err
 		}
+
+		if req.Hints.NoPoints() {
+			return bi.handleGroupReadNoPoints(f, rs)
+		}
 		return bi.handleGroupRead(f, rs)
 
 	default:
 		rs, err := bi.s.Read(bi.ctx, &req)
 		if err != nil {
 			return err
+		}
+
+		if req.Hints.NoPoints() {
+			return bi.handleReadNoPoints(f, rs)
 		}
 		return bi.handleRead(f, rs)
 	}
@@ -146,6 +154,38 @@ READ:
 		default:
 			panic(fmt.Sprintf("unreachable: %T", cur))
 		}
+
+		if err := f(table); err != nil {
+			table.Close()
+			return err
+		}
+		select {
+		case <-table.Done():
+		case <-bi.ctx.Done():
+			fmt.Println("CANCELED")
+			break READ
+		}
+	}
+	return nil
+}
+
+func (bi *tableIterator) handleReadNoPoints(f func(flux.Table) error, rs ostorage.ResultSet) error {
+	defer func() {
+		rs.Close()
+		fmt.Println("handleReadNoPoints: DONE")
+	}()
+
+READ:
+	for rs.Next() {
+		cur := rs.Cursor()
+		if !hasPoints(cur) {
+			// no data for series key + field combination
+			continue
+		}
+
+		key := groupKeyForSeries(rs.Tags(), &bi.readSpec, bi.bounds)
+		cols, defs := determineTableColsForSeries(rs.Tags(), flux.TString)
+		table := newTableNoPoints(bi.bounds, key, cols, rs.Tags(), defs)
 
 		if err := f(table); err != nil {
 			table.Close()
@@ -204,6 +244,35 @@ READ:
 		default:
 			panic(fmt.Sprintf("unreachable: %T", cur))
 		}
+
+		if err := f(table); err != nil {
+			table.Close()
+			return err
+		}
+		// Wait until the table has been read.
+		select {
+		case <-table.Done():
+		case <-bi.ctx.Done():
+			fmt.Println("CANCELED")
+			break READ
+		}
+
+		gc = rs.Next()
+	}
+	return nil
+}
+
+func (bi *tableIterator) handleGroupReadNoPoints(f func(flux.Table) error, rs ostorage.GroupResultSet) error {
+	defer func() {
+		rs.Close()
+		fmt.Println("handleGroupReadNoPoints: DONE")
+	}()
+	gc := rs.Next()
+READ:
+	for gc != nil {
+		key := groupKeyForGroup(gc.PartitionKeyVals(), &bi.readSpec, bi.bounds)
+		cols, defs := determineTableColsForGroup(gc.Keys(), flux.TString)
+		table := newGroupTableNoPoints(gc, bi.bounds, key, cols, gc.Tags(), defs)
 
 		if err := f(table); err != nil {
 			table.Close()
