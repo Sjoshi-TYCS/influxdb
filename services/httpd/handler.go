@@ -12,7 +12,6 @@ import (
 	"io/ioutil"
 	"log"
 	"math"
-	"mime"
 	"net/http"
 	"os"
 	"runtime/debug"
@@ -27,8 +26,6 @@ import (
 	"github.com/golang/snappy"
 	"github.com/influxdata/flux"
 	"github.com/influxdata/flux/control"
-	"github.com/influxdata/flux/csv"
-	"github.com/influxdata/flux/lang"
 	"github.com/influxdata/influxdb"
 	"github.com/influxdata/influxdb/logger"
 	"github.com/influxdata/influxdb/models"
@@ -119,7 +116,6 @@ type Handler struct {
 	Store Store
 
 	// Flux services
-	csvDialect       csv.Dialect
 	Controller       *control.Controller
 	CompilerMappings flux.CompilerMappings
 
@@ -142,9 +138,6 @@ func NewHandler(c Config) *Handler {
 		CLFLogger:      log.New(os.Stderr, "[httpd] ", 0),
 		stats:          &Statistics{},
 		requestTracker: NewRequestTracker(),
-		csvDialect: csv.Dialect{
-			ResultEncoderConfig: csv.DefaultEncoderConfig(),
-		},
 	}
 
 	// Limit the number of concurrent & enqueued write requests.
@@ -1113,34 +1106,15 @@ func (h *Handler) servePromRead(w http.ResponseWriter, r *http.Request, user met
 func (h *Handler) serveFluxQuery(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	ct := r.Header.Get("Content-Type")
-	mt, _, err := mime.ParseMediaType(ct)
+	req, err := decodeQueryRequest(r)
 	if err != nil {
 		h.httpError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	var fc lang.FluxCompiler
-	switch mt {
-	case "application/vnd.flux":
-		if d, err := ioutil.ReadAll(r.Body); err != nil {
-			h.httpError(w, err.Error(), http.StatusBadRequest)
-			return
-		} else {
-			fc.Query = string(d)
-		}
-	default:
-		if err := json.NewDecoder(r.Body).Decode(&fc); err != nil {
-			h.httpError(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-	}
-
-	var req pquery.Request
-	req.Compiler = fc
-	ctx = pquery.ContextWithRequest(ctx, &req)
-
-	q, err := h.Controller.Query(ctx, fc)
+	pr := req.ProxyRequest()
+	ctx = pquery.ContextWithRequest(ctx, &pr.Request)
+	q, err := h.Controller.Query(ctx, pr.Request.Compiler)
 	if err != nil {
 		h.httpError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1167,8 +1141,14 @@ func (h *Handler) serveFluxQuery(w http.ResponseWriter, r *http.Request) {
 	case "text/csv":
 		fallthrough
 	default:
-		h.csvDialect.SetHeaders(w)
-		encoder := h.csvDialect.Encoder()
+
+		if hd, ok := pr.Dialect.(httpDialect); !ok {
+			h.httpError(w, fmt.Sprintf("unsupported dialect over HTTP %T", req.Dialect), http.StatusBadRequest)
+			return
+		} else {
+			hd.SetHeaders(w)
+		}
+		encoder := pr.Dialect.Encoder()
 		results := flux.NewResultIteratorFromQuery(q)
 		n, err := encoder.Encode(w, results)
 		if err != nil {
